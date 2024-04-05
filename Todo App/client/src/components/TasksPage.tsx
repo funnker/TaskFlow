@@ -1,89 +1,109 @@
 import React, { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
+import { List, Task } from '../types/ListType';
+import axios from 'axios';
 
-interface List {
-    id: string;
-    name: string;
-    tasks: Task[];
-}
-
-interface Task {
-    id: string;
-    name: string;
-    completed: boolean;
-    dateTime: string;
-}
-
-interface Props {
-    lists: List[];
-    selectedListId: string | null;
-    setLists: React.Dispatch<React.SetStateAction<List[]>>;
-}
-
-function TasksPage({ lists, selectedListId, setLists }: Props) {
-    useEffect(() => {
-        localStorage.setItem('lists', JSON.stringify(lists));
-        localStorage.setItem('selectedListId', selectedListId || '')
-      }, [lists, selectedListId]);
-    const selectedList = lists.find((list) => list.id === selectedListId);
-    if (!selectedList) return <div>Selected list not found</div>;
-
+function TasksPage() {
+    const { id } = useParams<{ id: string }>();
+    const [isLoading, setIsLoading] = useState(true);
     const [newTaskName, setNewTaskName] = useState('');
     const [newTaskDateTime, setNewTaskDateTime] = useState('');
     const [filterDateTime, setFilterDateTime] = useState('');
     const [filterCompleted, setFilterCompleted] = useState(false);
+    const [selectedList, setSelectedList] = useState<List | null>(null);
+
+    useEffect(() => {
+        axios.get(`http://localhost:5000/api/lists/${id}`)
+        .then(response => {
+            setSelectedList(response.data);
+            setIsLoading(false);
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            setIsLoading(false);
+        });
+    }, [id])
+
+    if (isLoading) {
+        return <div>Loading...</div>;
+    }
+
+    if (!selectedList) return <div>Selected list not found</div>;
 
     const handleNewTaskSubmit = (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         if (!newTaskName.trim() || !newTaskDateTime.trim()) return;
-
+    
         const newTask: Task = {
             id: Date.now().toString(),
             name: newTaskName,
             completed: false,
             dateTime: newTaskDateTime,
         };
-        const updatedLists = lists.map((list) => {
-            if (list.id === selectedListId) {
-                list.tasks.push(newTask);
-            }
-            return list;
+    
+        axios.post(`http://localhost:5000/api/lists/${id}/tasks`, newTask, {
+            headers: {
+                'Content-Type': 'application/json',
+            },
+        })
+        .then(response => {
+            console.log('Success:', response.data);
+            const updatedList = { ...selectedList };
+            updatedList.tasks.push(newTask);
+            setSelectedList(updatedList);
+            setNewTaskName('');
+            setNewTaskDateTime('');
+        })
+        .catch((error) => {
+            console.error('Error on Task Add:', error);
         });
-
-        setLists(updatedLists);
-        setNewTaskName('');
-        setNewTaskDateTime('');
     };
 
     const handleTaskCheckboxChange = (taskId: string) => {
-        const updatedLists = lists.map((list) => {
-            if (list.id === selectedListId) {
-                list.tasks = list.tasks.map((task) =>
-                    task.id === taskId ? { ...task, completed: !task.completed } : task
-                );
-            }
-            return list;
-        });
-        setLists(updatedLists);
+        const updatedList = { ...selectedList };
+        const task = updatedList.tasks.find((task) => task.id === taskId);
+        if (!task) return;
+        task.completed = !task.completed;
+    
+        axios.patch(`http://localhost:5000/api/lists/${id}/tasks/${taskId}`, task)
+        .then(response => {
+            setSelectedList(updatedList);
+            return response;
+        })
+        .catch(error => console.error('Error on Task Update:', error));
     };
 
     const handleDeleteTask = (taskId: string) => {
-        const updatedLists = lists.map((list) => {
-            if (list.id === selectedListId) {
-                list.tasks = list.tasks.filter((task) => task.id !== taskId);
-            }
-            return list;
-        });
-        setLists(updatedLists);
+        axios.delete(`http://localhost:5000/api/lists/${id}/tasks/${taskId}`)
+        .then(response => {
+            const updatedList = { ...selectedList };
+            updatedList.tasks = updatedList.tasks.filter((task) => task.id !== taskId);
+            setSelectedList(updatedList);
+            return response;
+        })
+        .catch(error => console.error('Error on Task Delete:', error));
     };
 
     const handleDeleteCompletedTasks = () => {
-        const updatedLists = lists.map((list) => {
-            if (list.id === selectedListId) {
-                list.tasks = list.tasks.filter((task) => !task.completed);
+        const completedTasks = selectedList.tasks.filter(task => task.completed);
+        const completedTaskIds = completedTasks.map(task => task.id);
+    
+        Promise.all(completedTaskIds.map(taskId => 
+            axios.delete(`http://localhost:5000/api/lists/${id}/tasks/${taskId}`)
+        ))
+        .then(responses => {
+            // Check if all responses are ok
+            for(let response of responses) {
+                if (response.status !== 200) {
+                    throw new Error('Network response was not ok');
+                }
             }
-            return list;
-        });
-        setLists(updatedLists);
+            // Update the state
+            const updatedList = { ...selectedList };
+            updatedList.tasks = updatedList.tasks.filter((task) => !task.completed);
+            setSelectedList(updatedList);
+        })
+        .catch(error => console.error('Error on Completed Tasks Delete:', error));
     };
 
     const remainingTasksCount = selectedList.tasks.filter((task) => !task.completed).length;

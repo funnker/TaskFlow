@@ -1,25 +1,30 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { List } from '../types/ListType';
+import axios from 'axios';
+import { useListsStore } from '../Store';
 
-interface Props {
-    lists: List[],
-    setLists: React.Dispatch<React.SetStateAction<any[]>>,
-    setSelectedListId: React.Dispatch<React.SetStateAction<string | null>>
-}
-
-interface List {
-    id: string,
-    name: string,
-    tasks: any[]
-}
-
-const ListsPage = ({ lists, setLists, setSelectedListId }: Props) => {
+const ListsPage = () => {
   const [newListName, setNewListName] = useState('');
   const [selectedLists, setSelectedLists] = useState<string[]>([]);
+  const { lists, setLists } = useListsStore(state => ({ lists: state.lists, setLists: state.setLists }));
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    localStorage.setItem('lists', JSON.stringify(lists));
-  }, [lists]);
+    axios.get('http://localhost:5000/api/lists')
+      .then(response => {
+        setLists(response.data);
+        setIsLoading(false);
+      })
+      .catch(error => {
+        console.error('Error:', error);
+        setIsLoading(false);
+      });
+  }, []);
+
+  if (isLoading) {
+    return <div>Loading...</div>;
+  }
 
   const handleNewListSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -29,39 +34,60 @@ const ListsPage = ({ lists, setLists, setSelectedListId }: Props) => {
         name: newListName,
         tasks: []
     };
-    fetch('http://localhost:5000/api', {
-      method: 'POST',
+  
+    axios.post('http://localhost:5000/api/lists', newList, {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(newList),
     })
-    .then(response => response.json())
-    .then(data => {
-      console.log('Success:', data);
-      setLists([...lists, data]);
+    .then(response => {
+      window.alert('List added successfully');
+      setLists([...lists, response.data]);
       setNewListName('');
     })
     .catch((error) => {
-      console.error('Error:', error);
+      console.error('Error on List Add:', error);
     });
-  };
+};
 
   const handleListDelete = (id: string) => () => {
-    const updatedLists = lists.filter((list) => list.id !== id);
-    setLists(updatedLists);
+    fetch(`http://localhost:5000/api/lists/${id}`, {
+      method: 'DELETE',
+    })
+    .then(response => {
+      if(!response.ok) {
+        window.alert('Error deleting list')
+        throw new Error('Network response was not ok');
+      }
+      setLists(lists.filter(list => list.id !== id));
+      window.alert('List deleted successfully');
+    })
+    .catch(error => console.error('Error on List Delete:', error));
   };
 
   const handleListEdit = (id: string) => () => {
     const listName = prompt('Enter new list name');
     if (!listName?.trim()) return;
-    const updatedLists = lists.map((list) => {
-      if (list.id === id) {
-        list.name = listName;
+    const updatedList = { ...lists.find(list => list.id === id), name: listName };
+    fetch(`http://localhost:5000/api/lists/${id}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(updatedList),
+    })
+    .then(response => {
+      if(!response.ok) {
+        window.alert('Error updating list');
+        throw new Error('Network response was not ok');
       }
-      return list;
-    });
-    setLists(updatedLists);
+      window.alert('List updated successfully');
+      return response.json();
+    })
+    .then(updatedList => {
+      setLists(lists.map(list => list.id === id ? updatedList : list));
+    })
+    .catch(error => console.error('Error on update:', error));
   };
 
   const handleExportList = (id: string) => () => {
@@ -120,7 +146,7 @@ const ListsPage = ({ lists, setLists, setSelectedListId }: Props) => {
                   type="checkbox" 
                   onChange={() => handleListCheckboxChange(list.id)}
                   />
-                <Link to={'/lists/' + list.id} onClick={() => setSelectedListId(list.id)}>
+                <Link to={'/lists/' + list.id}>
                   {list.name}
                 </Link>
                 <button className="cool-btn" type="button" onClick={handleExportList(list.id)}>Export</button>
