@@ -1,25 +1,63 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { List } from '../types/ListType';
 import axios from 'axios';
-import { useListsStore } from '../Store';
+import { useListsStore } from '../stores/ListStore'
+import { useAxiosStore } from '../stores/AxiosStore';
+import io from 'socket.io-client';
+import { useNotificationStore } from '../stores/NotificationStore';
+import NotificationDisplay from './NotificationDisplay';
 
 const ListsPage = () => {
   const [newListName, setNewListName] = useState('');
-  const [selectedLists, setSelectedLists] = useState<string[]>([]);
+  const [selectedLists, setSelectedLists] = useState<number[]>([]);
   const { lists, setLists } = useListsStore(state => ({ lists: state.lists, setLists: state.setLists }));
   const [isLoading, setIsLoading] = useState(true);
+  const socketInstance = useRef<WebSocket>();
+  const { getAxiosInstance } = useAxiosStore(state => ({ getAxiosInstance: state.getAxiosInstance }));
+  const { addNotification } = useNotificationStore();
 
   useEffect(() => {
-    axios.get('http://localhost:5000/api/lists')
-      .then(response => {
+    const fetchLists = async () => {
+      setIsLoading(true);
+      try {
+        const response = await axios.get('http://localhost:5000/api/lists');
         setLists(response.data);
-        setIsLoading(false);
-      })
-      .catch(error => {
+      } catch (error) {
         console.error('Error:', error);
+        addNotification('Error fetching lists', 'error');
+      } finally {
         setIsLoading(false);
-      });
+      }
+    };
+
+    fetchLists();
+  }, []);
+
+  useEffect(() => {
+    const socket = io('http://localhost:5000');
+
+    socket.on('newList', (newList) => {
+      axios.post('http://localhost:5000/api/lists', newList, {
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    })
+    .then(response => {
+      addNotification('List added succesfully', 'success');
+      setLists([...lists, response.data]);
+      if(socketInstance.current) {
+        socketInstance.current.send(JSON.stringify(response.data));
+      }
+      setNewListName('');
+    })
+    .catch((error) => {
+      console.error('Error on List Add:', error);
+    });
+    });
+
+    return () => {
+      socket.disconnect();
+    };
   }, []);
 
   if (isLoading) {
@@ -29,19 +67,15 @@ const ListsPage = () => {
   const handleNewListSubmit = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!newListName.trim()) return;
-    const newList: List = {
-        id: Date.now().toString(),
+    const newList = {
         name: newListName,
         tasks: []
     };
-  
-    axios.post('http://localhost:5000/api/lists', newList, {
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    })
-    .then(response => {
-      window.alert('List added successfully');
+
+    getAxiosInstance()
+    .post('/lists', newList)
+    .then((response) => {
+      addNotification('List added succesfully', 'success');
       setLists([...lists, response.data]);
       setNewListName('');
     })
@@ -50,47 +84,34 @@ const ListsPage = () => {
     });
 };
 
-  const handleListDelete = (id: string) => () => {
-    fetch(`http://localhost:5000/api/lists/${id}`, {
-      method: 'DELETE',
-    })
-    .then(response => {
-      if(!response.ok) {
-        window.alert('Error deleting list')
-        throw new Error('Network response was not ok');
-      }
+  const handleListDelete = (id: number) => () => {
+    getAxiosInstance()
+    .delete(`/lists/${id}`)
+    .then(() => {
+      addNotification('List deleted successfully', 'success');
       setLists(lists.filter(list => list.id !== id));
-      window.alert('List deleted successfully');
     })
-    .catch(error => console.error('Error on List Delete:', error));
+    .catch((error) => {
+      console.error('Error on delete:', error);
+    });
   };
 
-  const handleListEdit = (id: string) => () => {
+  const handleListEdit = (id: number) => () => {
     const listName = prompt('Enter new list name');
     if (!listName?.trim()) return;
     const updatedList = { ...lists.find(list => list.id === id), name: listName };
-    fetch(`http://localhost:5000/api/lists/${id}`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(updatedList),
+    getAxiosInstance()
+    .patch(`/lists/${id}`, updatedList)
+    .then((response) => {
+      addNotification('List updated successfully', 'success');
+      setLists(lists.map(list => list.id === id ? response.data : list));
     })
-    .then(response => {
-      if(!response.ok) {
-        window.alert('Error updating list');
-        throw new Error('Network response was not ok');
-      }
-      window.alert('List updated successfully');
-      return response.json();
-    })
-    .then(updatedList => {
-      setLists(lists.map(list => list.id === id ? updatedList : list));
-    })
-    .catch(error => console.error('Error on update:', error));
+    .catch((error) => {
+      console.error('Error on update:', error);
+    });
   };
 
-  const handleExportList = (id: string) => () => {
+  const handleExportList = (id: number) => () => {
     const list = lists.find((list) => list.id === id);
     if (!list) return;
     const data = JSON.stringify(list);
@@ -103,7 +124,7 @@ const ListsPage = () => {
     URL.revokeObjectURL(url);
   }
 
-  const handleListCheckboxChange = (id: string) => {
+  const handleListCheckboxChange = (id: number) => {
     if (selectedLists.includes(id)) {
       setSelectedLists(selectedLists.filter((listId) => listId !== id));
     } else {
@@ -124,40 +145,43 @@ const ListsPage = () => {
   }
 
   return (
-    <div className="lists-container">
-      <h1>Todo Lists</h1>
-      <form className="list-form" onSubmit={handleNewListSubmit}>
-        <input
-          className="form-input"
-          type="text"
-          value={newListName}
-          onChange={(e) => setNewListName(e.target.value)}
-          placeholder="Enter list name"
-        />
-        <button type="submit">Add List</button>
-      </form>
-      <button className="cool-btn" type="button" onClick = {handleExportSelectedLists}>Export Selected</button>
-      <div className="lists">
-        <ul>
-          {lists.map((list) => (
-            <li key={list.id}>
-              <div className="list-item-container">
-                <input 
-                  type="checkbox" 
-                  onChange={() => handleListCheckboxChange(list.id)}
-                  />
-                <Link to={'/lists/' + list.id}>
-                  {list.name}
-                </Link>
-                <button className="cool-btn" type="button" onClick={handleExportList(list.id)}>Export</button>
-                <button className="cool-btn" type="button" onClick={handleListDelete(list.id)}>Delete</button>
-                <button className="cool-btn" type="button" onClick={handleListEdit(list.id)}>Edit</button>
-              </div>
-            </li>
-          ))}
-        </ul>
+    <>
+      <NotificationDisplay />
+      <div className="lists-container">
+        <h1>Todo Lists</h1>
+        <form className="list-form" onSubmit={handleNewListSubmit}>
+          <input
+            className="form-input"
+            type="text"
+            value={newListName}
+            onChange={(e) => setNewListName(e.target.value)}
+            placeholder="Enter list name"
+          />
+          <button type="submit">Add List</button>
+        </form>
+        <button className="cool-btn" type="button" onClick = {handleExportSelectedLists}>Export Selected</button>
+        <div className="lists">
+          <ul>
+            {lists.map((list) => (
+              <li key={list.id}>
+                <div className="list-item-container">
+                  <input 
+                    type="checkbox" 
+                    onChange={() => handleListCheckboxChange(list.id)}
+                    />
+                  <Link to={'/lists/' + list.id}>
+                    {list.name}
+                  </Link>
+                  <button className="cool-btn" type="button" onClick={handleExportList(list.id)}>Export</button>
+                  <button className="cool-btn" type="button" onClick={handleListDelete(list.id)}>Delete</button>
+                  <button className="cool-btn" type="button" onClick={handleListEdit(list.id)}>Edit</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
-    </div>
+    </>
   );
 };
 
