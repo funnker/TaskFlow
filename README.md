@@ -1,4 +1,4 @@
-# Task Management App
+# TaskFlow - A Task Management App
 
 A full-stack task management application built with ExpressJS, React, and PostgreSQL. This app allows users to manage tasks and task lists efficiently, with features like offline synchronization, real-time updates, and secured authentication.
 
