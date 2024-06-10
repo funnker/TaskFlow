@@ -1,17 +1,21 @@
 const express = require('express');
 const router = express.Router();
+const verifyUserRole = require('../src/middleware/VerifyUserRole');
 const {
     getAllLists,
+    getAllListsTasksCount,
     getListById,
     createList,
     updateList,
-    deleteList
+    deleteList,
+    getAllListsByUserId
 } = require('../src/controller/ListController'); 
 
-router.get("/", getAllLists);
-router.post("/", createList);
-router.delete("/:id", deleteList);
+router.get("/", getAllListsByUserId);
+router.get("/ok", getAllListsTasksCount)
+router.use(verifyUserRole).post("/", createList);
+router.use(verifyUserRole).delete("/:id", deleteList);
 router.get("/:id", getListById);
-router.patch("/:id", updateList);
+router.use(verifyUserRole).patch("/:id", updateList);
 
 module.exports = router;

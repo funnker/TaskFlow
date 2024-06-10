@@ -8,12 +8,23 @@ const getAllLists = (order) => {
     }
 }
 
+const getAllListsByUserId = (userId, page, pageSize) => {
+    const offset = (page - 1) * pageSize;
+    console.log(userId);
+    return db.any('SELECT * FROM Lists WHERE user_id = $1 ORDER BY name ASC OFFSET $2 LIMIT $3', [userId, offset, pageSize]);
+}
+
+const getAllListsTasksCount = (page, pageSize) => {
+    const offset = (page - 1) * pageSize;
+    return db.any('SELECT Lists.id, Lists.name, COUNT(Tasks.id) AS "taskCount" FROM Lists LEFT JOIN Tasks ON Lists.id = Tasks.list_id GROUP BY Lists.id, Lists.name ORDER BY Lists.name ASC OFFSET $1 LIMIT $2', [offset, pageSize]);
+}
+
 const getListById = (id) => {
     return db.one('SELECT * FROM Lists WHERE id = $1', [id]);
 }
 
-const createList = (newList) => {
-    return db.one('INSERT INTO Lists (name) VALUES ($1) RETURNING *', [newList.name]);
+const createList = (userId, newList) => {
+    return db.one('INSERT INTO Lists (id, name, user_id) VALUES ($1, $2, $3) RETURNING *', [newList.id, newList.name, userId]);
 }
 
 const updateList = (id, updatedList) => {
@@ -21,13 +32,21 @@ const updateList = (id, updatedList) => {
 }
 
 const deleteList = (id) => {
-    return db.none('DELETE FROM Lists WHERE id = $1', [id]);
+    return db.tx(t => {
+        // Delete all tasks associated with the list
+        const deleteTasks = t.none('DELETE FROM Tasks WHERE list_id = $1', [id]);
+        // Delete the list
+        const deleteList = t.none('DELETE FROM Lists WHERE id = $1', [id]);
+        return t.batch([deleteTasks, deleteList]);
+    });
 }
 
 module.exports = {
     getAllLists,
+    getAllListsTasksCount,
     getListById,
     createList,
     updateList,
-    deleteList
+    deleteList,
+    getAllListsByUserId
 };
